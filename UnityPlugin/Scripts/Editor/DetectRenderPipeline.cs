@@ -51,11 +51,8 @@ public static class DetectRenderPipeline
 		{
 			newSymbolString = definedSymbols + ";";
 		}
-        if (IsHDRPInstalled())
-        {
-			newSymbolString += "USING_HDRP";
-        }
-        else if (IsURPInstalled())
+        
+        if (IsURPInstalled())
         {
 			newSymbolString += "USING_URP";
 			// check for 2019
@@ -63,6 +60,10 @@ public static class DetectRenderPipeline
             {
 				newSymbolString += ";USING_2019";
             }
+		}
+		if (IsHDRPInstalled())
+		{
+			newSymbolString += "USING_HDRP";
 		}
 		else
         {

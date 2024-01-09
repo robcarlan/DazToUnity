@@ -1,4 +1,4 @@
-﻿#define USING_HDRP
+﻿#define USING_URP
 #define USING_HARDCODED_RENDERPIPELINE
 
 

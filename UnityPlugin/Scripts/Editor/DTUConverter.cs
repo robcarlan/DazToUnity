@@ -1,4 +1,4 @@
-﻿#define USING_HDRP
+﻿#define USING_URP
 #define USING_HARDCODED_RENDERPIPELINE
 
 
@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using UnityEngine;
 using UnityEditor;
+using UnityEditor.Rendering.BuiltIn.ShaderGraph;
 
 namespace Daz3D
 {
@@ -220,9 +221,10 @@ namespace Daz3D
 
 			var dualLobeSpecularWeight = dtuMaterial.Get("Dual Lobe Specular Weight");
 			var dualLobeSpecularReflectivity = dtuMaterial.Get("Dual Lobe Specular Reflectivity");
-
-			// DB (2021-05-03): added "Iray Uber" and "PBRSkin" to materialtypes which can potential be classified as skin.
-			if (dtuMaterial.MaterialType == "omUberSurface" || dtuMaterial.MaterialType == "omHumanSurface" || dtuMaterial.MaterialType == "Iray Uber" || dtuMaterial.MaterialType == "PBRSkin")
+			
+			var skinMaterialTypes = new List<string> { "omUberSurface", "omHumanSurface", "Iray Uber", "PBRSkin", "AoA_Subsurface" };
+			
+			if (skinMaterialTypes.Contains(dtuMaterial.Value))
 			{
 				if (IsDTUMaterialWet(dtuMaterial))
 				{
@@ -334,7 +336,7 @@ namespace Daz3D
 				//if we're transparent and double sided, unless we're something like eyelashes we want to default to writing to the depth buffer
 				if(isTransparent && !matNameLower.Contains("eyelash"))
 				{
-					UnityEngine.Debug.LogWarning("Material is both double sided and transparent, you will have rendering artifacts against the two sides where they are alphad, for mat: " + mat.name);
+					Debug.LogWarning("Material is both double sided and transparent, you will have rendering artifacts against the two sides where they are alphad, for mat: " + mat.name);
 					mat.SetFloat("_ZWrite",1f);
 //					mat.SetFloat("_TransparentZWrite",1f);
 				}
@@ -408,7 +410,7 @@ namespace Daz3D
 			//  IrayUberSkin - Used when we guess that the mat is for skin
 			//  IrayUberHair - Used when we guess that the mat is for hair
 
-			/**
+			/*
 			The Lit master node in unity supports a few material types:
 			 Standard (metal/rough), Specular Color (Spec/gloss), Tranlsucent (no sss), SSS (same as translucent but with a SSS mask)
 			There is also a stack master which attempts to combine several of these features into one node
@@ -433,7 +435,7 @@ namespace Daz3D
 
 
 
-			/**
+			/*
 
 			See: http://docs.daz3d.com/doku.php/public/software/dazstudio/4/referenceguide/interface/panes/surfaces/shaders/iray_uber_shader/shader_general_concepts/start
 			See: https://www.deviantart.com/sickleyield/journal/Iray-Surfaces-And-What-They-Mean-519346747
@@ -511,8 +513,7 @@ namespace Daz3D
 			var matNameLower = dtuMaterial.MaterialName.ToLower();
 			var assetNameLower = dtuMaterial.AssetName.ToLower();
 			var valueLower = dtuMaterial.Value.ToLower();
-
-
+			
 			//There are 3 types of iray uber surfaces, which are represented by "Base Mixing"
 
 			DTUBaseMixing baseMixing = DTUBaseMixing.Unknown;
@@ -545,13 +546,14 @@ namespace Daz3D
 			bool isInvisible = false;
 
 			bool isSclera = false;
-
-
-
+			
 
 			//Let's load all the properties we might use, not all paths read all these values
 
 			var diffuseColor = dtuMaterial.Get("Diffuse Color");
+			// Need to override based on some objects.
+			// i.e.  Asset Label "NN Jacket" -> Metallic Weight => 0
+			
 			var metallicWeight = dtuMaterial.Get("Metallic Weight");
 
 			var diffuseWeight = dtuMaterial.Get("Diffuse Weight");
@@ -760,7 +762,7 @@ namespace Daz3D
                     // DB 2021-09-25: following message doesn't make sense because there is no support in specular shader either.
                     //if(isMetal)
                     //{
-                    //	UnityEngine.Debug.LogWarning("Using translucency with metal is not supported, swapping to specular instead for mat: " + dtuMaterial.MaterialName);
+                    //	Debug.LogWarning("Using translucency with metal is not supported, swapping to specular instead for mat: " + dtuMaterial.MaterialName);
                     //}
                     ////if we're translucent, force into a specular workflow
                     isSpecular = true;
@@ -793,7 +795,7 @@ namespace Daz3D
 						shaderName = DTU_Constants.shaderNameMetal;
 				}
 				else {
-					UnityEngine.Debug.LogError("Invalid material, we don't know what shader to pick");
+					Debug.LogError("Invalid material, we don't know what shader to pick");
 					return null;
 				}
 #if USING_URP
@@ -810,9 +812,10 @@ namespace Daz3D
 			var shader = Shader.Find(shaderName);
 			if(shader == null)
 			{
-				UnityEngine.Debug.LogError("Failed to locate shader: " + shaderName + " for mat: " + dtuMaterial.MaterialName);
+				Debug.LogError("Failed to locate shader: " + shaderName + " for mat: " + dtuMaterial.MaterialName);
 				return null;
 			}
+			
 			var mat = new Material(shader);
 
 			if(horizontalTile.Exists && mat.HasProperty("_Tiling"))
@@ -842,7 +845,7 @@ namespace Daz3D
 				//Hairs are pretty simple b/c we only care about a few properties, so we're forking here to deal with it
 				isDoubleSided = true;
 				// 2022-Feb-04 (DB): hardcode from isTransparent=true back to isTransparent=false to fix zsorting problems with hair vs cap, etc
-				isTransparent = false;
+				isTransparent = true;
 
 #if USING_STANDARD_SHADER
 				mat.renderQueue = 2450;
@@ -919,6 +922,14 @@ namespace Daz3D
 #endif
 				mat.SetFloat("_AlphaPower",1.0f);
 #endif // USING_STANDARD_SHADER
+				
+				// RobC additions
+				// Need to fix this, maybe generalise per hair type, not everything is fully transparent
+				// add a menu item to recompile just these? 
+				// needs to be cleaned up af 
+				// mat.SetInt("_SurfaceType", (int)BuiltInBaseShaderGUI.SurfaceType.Transparent);
+				// mat.SetInt("_RenderQueueType", 4);
+				// mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
 			}
 			else if(isWet)
 			{
@@ -1055,7 +1066,7 @@ namespace Daz3D
 
 					if(!isSkin)
 					{
-						UnityEngine.Debug.LogWarning("Dual Lobe support is only available on the skin shader currently for mat: " + dtuMaterial.MaterialName);
+						Debug.LogWarning("Dual Lobe support is only available on the skin shader currently for mat: " + dtuMaterial.MaterialName);
 					}
 
 					if(mat.HasProperty("_DualLobeSpecularWeight")){
@@ -1105,7 +1116,7 @@ namespace Daz3D
 						mat.SetTexture("_SpecularLobe1RoughnessMap",specularLobe1RoughnessTexture);
 						mat.SetTexture("_SpecularLobe2RoughnessMap",specularLobe2RoughnessTexture);
 					} else {
-						UnityEngine.Debug.LogWarning("Shader: " +shaderName + " doesn't support dual lobe support yet for mat: " + dtuMaterial.MaterialName);
+						Debug.LogWarning("Shader: " +shaderName + " doesn't support dual lobe support yet for mat: " + dtuMaterial.MaterialName);
 					}
 				}
 
@@ -1401,7 +1412,7 @@ namespace Daz3D
 
 
 
-			/**
+			/*
 			Plastic, Metallic, GlossyPlastic, GLossyMetallic uses all but
 				Sheen Color
 				Scatter Color
@@ -1473,7 +1484,7 @@ namespace Daz3D
 			var shader = Shader.Find(shaderName);
 			if(shader == null)
 			{
-				UnityEngine.Debug.LogError("Failed to locate shader: " + shaderName + " for mat: " + dtuMaterial.MaterialName);
+				Debug.LogError("Failed to locate shader: " + shaderName + " for mat: " + dtuMaterial.MaterialName);
 				return null;
 			}
 			var mat = new Material(shader);
@@ -1658,7 +1669,7 @@ namespace Daz3D
 				var shader = Shader.Find(shaderName);
 			if(shader == null)
 			{
-				UnityEngine.Debug.LogError("Failed to locate shader: " + shaderName + " for mat: " + dtuMaterial.MaterialName);
+				Debug.LogError("Failed to locate shader: " + shaderName + " for mat: " + dtuMaterial.MaterialName);
 				return null;
 			}
 			var mat = new Material(shader);
@@ -1875,7 +1886,7 @@ namespace Daz3D
 			var shader = Shader.Find(shaderName);
 			if(shader == null)
 			{
-				UnityEngine.Debug.LogError("Failed to locate shader: " + shaderName + " for mat: " + dtuMaterial.MaterialName);
+				Debug.LogError("Failed to locate shader: " + shaderName + " for mat: " + dtuMaterial.MaterialName);
 				return null;
 			}
 			var mat = new Material(shader);
@@ -2127,7 +2138,7 @@ namespace Daz3D
 				var shader = Shader.Find(shaderName);
 			if(shader == null)
 			{
-				UnityEngine.Debug.LogError("Failed to locate shader: " + shaderName + " for mat: " + dtuMaterial.MaterialName);
+				Debug.LogError("Failed to locate shader: " + shaderName + " for mat: " + dtuMaterial.MaterialName);
 				return null;
 			}
 			var mat = new Material(shader);
@@ -2271,7 +2282,7 @@ namespace Daz3D
 			var shader = Shader.Find(shaderName);
 			if (shader == null)
 			{
-				UnityEngine.Debug.LogError("Failed to locate shader: " + shaderName + " for mat: " + dtuMaterial.MaterialName);
+				Debug.LogError("Failed to locate shader: " + shaderName + " for mat: " + dtuMaterial.MaterialName);
 				return null;
 			}
 			var mat = new Material(shader);
@@ -2422,7 +2433,7 @@ namespace Daz3D
 				var shader = Shader.Find(shaderName);
 			if(shader == null)
 			{
-				UnityEngine.Debug.LogError("Failed to locate shader: " + shaderName + " for mat: " + dtuMaterial.MaterialName);
+				Debug.LogError("Failed to locate shader: " + shaderName + " for mat: " + dtuMaterial.MaterialName);
 				return null;
 			}
 			var mat = new Material(shader);
@@ -2487,7 +2498,15 @@ namespace Daz3D
 			}
 
 			return mat;
+		}
 
+		public void applyCommonMaterialOverrides(DTUMaterial dtuMaterial, Material mat)
+		{
+			// Specific overrides on a per object basis
+			if (dtuMaterial.AssetName.Contains("NN Jacket"))
+			{
+				mat.SetFloat("_Metallic", 0.0f);
+			}
 		}
 
 
@@ -2496,7 +2515,7 @@ namespace Daz3D
 		/// </summary>
 		/// <param name="dtuMaterial">The DTUMaterial object that exists in the array of mats inside the .dtu file</param>
 		/// <returns></returns>
-		public Material ConvertToUnity(DTUMaterial dtuMaterial)
+		public Material ConvertToUnity(DTUMaterial dtuMaterial, bool fastMode = false)
 		{
 			var materialDir = GetMaterialDir(dtuMaterial);
 			if (UseSharedMaterialDir)
@@ -2532,7 +2551,7 @@ namespace Daz3D
 
 			if(dtuMaterial.MaterialType == "PBR SP")
 			{
-				/**
+				/*
 				 * Properties
 				 *
 				 * Metallic Weight (w/ texture)
@@ -2553,6 +2572,10 @@ namespace Daz3D
 				materialType = DTUMaterialType.IrayUber;
 			}
 			else if(dtuMaterial.MaterialType == "Iray Uber" || dtuMaterial.MaterialType == "Front")
+			{
+				materialType = DTUMaterialType.IrayUber;
+			}
+			else if(dtuMaterial.MaterialType == "AoA_Subsurface")
 			{
 				materialType = DTUMaterialType.IrayUber;
 			}
@@ -2579,76 +2602,70 @@ namespace Daz3D
 			else
 			{
 				//If we don't know what it is, we'll just try, but it's quite possible it won't work
-				UnityEngine.Debug.LogWarning("Unknown material type: " + dtuMaterial.MaterialType + " for mat: " + dtuMaterial.MaterialName + " using default");
+				Debug.LogWarning("Unknown material type: " + dtuMaterial.MaterialType + " for mat: " + dtuMaterial.MaterialName + " using default");
 				materialType = DTUMaterialType.DazStudioDefault;
-				//return null;
 			}
-
 
 			//Now we'll go to custom functions for specific shaders if we have one, otherwise we'll use a fallback that is generic
-
-			if(materialType == DTUMaterialType.IrayUber)
+			// RobC :: optimization -- can load this from asset if it already exists, rather than create a new one every time
+			Material material = null;
+			bool materialAlreadyExists = false;
+			if (fastMode)
 			{
-				//If we are using the Iray Uber shader, we have a different function to handle this
-				var uberMat = ConvertToUnityIrayUber(dtuMaterial, textureDir);
-				if(uberMat != null)
+				var existingMaterial = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
+				if (existingMaterial != null)
 				{
-					SaveMaterialAsAsset(uberMat,materialPath);
-					return uberMat;
-				}
-			} else if(materialType == DTUMaterialType.DazStudioDefault)
-			{
-				var defaultMat = ConvertToUnityDazStudioDefault(dtuMaterial, textureDir);
-				if(defaultMat != null)
-				{
-					SaveMaterialAsAsset(defaultMat,materialPath);
-					return defaultMat;
-				}
-			} else if(materialType == DTUMaterialType.PBRSP)
-			{
-				var pbrspMat = ConvertToUnityPBRSP(dtuMaterial, textureDir);
-				if(pbrspMat != null)
-				{
-					SaveMaterialAsAsset(pbrspMat,materialPath);
-					return pbrspMat;
-				}
-			} else if(materialType == DTUMaterialType.OmUberSurface)
-			{
-				var localMat = ConvertToUnityOmUberSurface(dtuMaterial, textureDir);
-				if(localMat != null)
-				{
-					SaveMaterialAsAsset(localMat,materialPath);
-					return localMat;
-				}
-			} else if(materialType == DTUMaterialType.OOTHairblendingHair)
-			{
-				var localMat = ConvertToUnityOOTHairblendingHair(dtuMaterial, textureDir);
-				if(localMat != null)
-				{
-					SaveMaterialAsAsset(localMat,materialPath);
-					return localMat;
-				}
-			} else if(materialType == DTUMaterialType.BlendedDualLobeHair)
-			{
-				var localMat = ConvertToUnityBlendedDualLobeHair(dtuMaterial, textureDir);
-				if(localMat != null)
-				{
-					SaveMaterialAsAsset(localMat,materialPath);
-					return localMat;
-				}
-			}
-			else if (materialType == DTUMaterialType.LittleFoxHair)
-			{
-				var localMat = ConvertToUnityLittleFoxHair(dtuMaterial, textureDir);
-				if (localMat != null)
-				{
-					SaveMaterialAsAsset(localMat, materialPath);
-					return localMat;
+					Debug.Log("Found existing material: " + materialPath);
+					material = existingMaterial;
+					materialAlreadyExists = true;
 				}
 			}
 
-			UnityEngine.Debug.LogError("Unsupported materialType: " + materialType + " raw shader is: " + dtuMaterial.MaterialType);
-			return null;
+			switch (materialType) 
+			{
+				case DTUMaterialType.IrayUber:
+					material = ConvertToUnityIrayUber(dtuMaterial, textureDir);
+					break;
+				case DTUMaterialType.DazStudioDefault:
+					material = ConvertToUnityDazStudioDefault(dtuMaterial, textureDir);
+					break;
+				case DTUMaterialType.PBRSP:
+					material = ConvertToUnityPBRSP(dtuMaterial, textureDir);
+					break;
+				case DTUMaterialType.OmUberSurface:
+					material = ConvertToUnityOmUberSurface(dtuMaterial, textureDir);
+					break;
+				case DTUMaterialType.OOTHairblendingHair:
+					material = ConvertToUnityOOTHairblendingHair(dtuMaterial, textureDir);
+					break;
+				case DTUMaterialType.BlendedDualLobeHair:
+					material = ConvertToUnityBlendedDualLobeHair(dtuMaterial, textureDir);
+					break;
+				case DTUMaterialType.LittleFoxHair:
+					material = ConvertToUnityLittleFoxHair(dtuMaterial, textureDir);
+					break;
+				case DTUMaterialType.Unknown:
+					Debug.LogError("Unsupported materialType: " + materialType + " raw shader is: " + dtuMaterial.MaterialType);
+					break;
+			}
+
+			if (material == null)
+			{
+				return null;
+			}
+
+			applyCommonMaterialOverrides(dtuMaterial, material);
+
+			if (fastMode && materialAlreadyExists)
+			{
+				AssetDatabase.SaveAssets();
+			}
+			else
+			{
+				SaveMaterialAsAsset(material, materialPath);
+			}
+			
+			return material;
 		}
 
 		public void SaveMaterialAsAsset(Material mat, string materialPath)
@@ -2658,7 +2675,7 @@ namespace Daz3D
 				return;
 			}
 
-			UnityEngine.Debug.Log("Creating mat: " + mat.name + " at : " + materialPath);
+			Debug.Log("Creating mat: " + mat.name + " at : " + materialPath);
 			AssetDatabase.CreateAsset(mat,materialPath);
 
 			//Works around a bug in HDRP, see: https://docs.unity3d.com/Packages/com.unity.render-pipelines.high-definition@7.1/manual/Creating-and-Editing-HDRP-Shader-Graphs.html "Known Issues"
@@ -2687,8 +2704,14 @@ namespace Daz3D
 		/// </summary>
 		/// <param name="path"></param>
 		/// <returns></returns>
-		public Texture2D ImportTextureFromPath(string path, string localAssetDir, Daz3DDTUImporter.ImportEventRecord record,
-			bool isNormal = false, bool isLinear = false, bool isOpacityMap = false )
+		public Texture2D ImportTextureFromPath(
+			string path, 
+			string localAssetDir, 
+			Daz3DDTUImporter.ImportEventRecord record,
+			bool isNormal = false, 
+			bool isLinear = false, 
+			bool isOpacityMap = false 
+		)
 		{
 			if(string.IsNullOrEmpty(path))
 			{
@@ -2697,7 +2720,7 @@ namespace Daz3D
 
 			if(!System.IO.File.Exists(path))
 			{
-				UnityEngine.Debug.LogWarning("Asking to import texture: " + path + " but file does not exist");
+				Debug.LogWarning("Asking to import texture: " + path + " but file does not exist");
 				return null;
 			}
 
@@ -2723,12 +2746,9 @@ namespace Daz3D
 
 			bool dirty = false;
 
-
-
-
 			if (copyRemtoe)
 			{
-				UnityEngine.Debug.Log("Copying file: " + path);
+				Debug.Log("Copying file: " + path);
 				// BUGFIX: copyRemote is set to false if file exists OR if MD5 is different, which means overwrite must be turned on
 				try
 				{
@@ -2737,7 +2757,7 @@ namespace Daz3D
 				catch (System.IO.IOException e)
                 {
 					// BUGFIX: fail gracefully, issue error and continue import...
-					UnityEngine.Debug.LogError("WARNING: Failed to copy texture file, DTU import will continue but there may be missing textures: " + path);
+					Debug.LogError("WARNING: Failed to copy texture file, DTU import will continue but there may be missing textures: " + path);
 				}
 				AssetDatabase.Refresh();
 			}
@@ -2748,7 +2768,7 @@ namespace Daz3D
 
 			if(ti == null)
 			{
-				UnityEngine.Debug.LogWarning("Failed to get a texture importer for path: " + cleanPath + " verify texture has the correct settings manually");
+				Debug.LogWarning("Failed to get a texture importer for path: " + cleanPath + " verify texture has the correct settings manually");
 			} else {
 				if(isNormal)
 				{
@@ -2788,328 +2808,4 @@ namespace Daz3D
 			return tex;
 		}
 	}
-
-	public struct DTUMaterial
-	{
-		public float Version;
-		public string ProductName;
-		public string ProductComponentName;
-		public string AssetName;
-		public string MaterialName;
-		public string MaterialType;
-		public string Value;
-
-		public List<DTUMaterialProperty> Properties;
-
-		private Dictionary<string,DTUMaterialProperty> _map;
-
-		public Dictionary<string,DTUMaterialProperty> Map
-		{
-			get
-			{
-				if(_map == null || _map.Count == 0)
-				{
-					_map = new Dictionary<string, DTUMaterialProperty>();
-					foreach(var prop in Properties)
-					{
-						_map[prop.Name] = prop;
-					}
-				}
-
-				return _map;
-			}
-		}
-
-		public bool HasProperty(string key)
-        {
-			return Map.ContainsKey(key);
-        }
-
-		public DTUMaterialProperty Get(string key)
-		{
-			if(Map.ContainsKey(key))
-			{
-				return Map[key];
-			}
-			return new DTUMaterialProperty();
-		}
-
-		// DB (2021-05-14): new override which returns defaultValue if property does not exist
-		public DTUMaterialProperty Get(string key, DTUValue defaultValue)
-		{
-			if (Map.ContainsKey(key))
-			{
-				return Map[key];
-			}
-
-			DTUMaterialProperty newProp = new DTUMaterialProperty();
-			newProp.Value = defaultValue;
-			return newProp;
-
-		}
-
-	}
-
-	public struct DTUMaterialProperty
-	{
-		public string Name;
-		public DTUValue Value;
-		public string Texture;
-		public bool TextureExists() { return !string.IsNullOrEmpty(Texture); }
-
-		/// <summary>
-		/// True if this property was found in the DTU
-		/// </summary>
-		public bool Exists;
-
-		public Color Color
-		{
-			get {
-				return Value.AsColor;
-			}
-		}
-
-		public float ColorStrength
-		{
-			get {
-				return Daz3D.Utilities.GetStrengthFromColor(Color);
-			}
-		}
-
-		public float Float
-		{
-			get {
-				return (float)Value.AsDouble;
-			}
-		}
-
-		public bool Boolean
-		{
-			get {
-				return Value.AsDouble > 0.5;
-			}
-		}
-	}
-
-	public struct DTUValue
-	{
-		public enum DataType {
-			Integer,
-			Float,
-			Double,
-			Color,
-			String,
-			Texture,
-		};
-
-		public DataType Type;
-
-		public int AsInteger;
-		public float AsFloat;
-		public double AsDouble;
-		public Color AsColor;
-		public string AsString;
-
-		public override string ToString()
-		{
-			switch(Type)
-			{
-				case DataType.Integer:
-					return "int:"+AsInteger.ToString();
-				case DataType.Float:
-					return "float:"+AsFloat.ToString();
-				case DataType.Double:
-					return "double:"+AsDouble.ToString();
-				case DataType.Color:
-					return "color:"+AsColor.ToString();
-				case DataType.String:
-					return AsString;
-				default:
-					throw new System.Exception("Unsupported type");
-			}
-		}
-
-		public DTUValue(double value)
-        {
-			AsDouble = value;
-			Type = DataType.Double;
-			AsFloat = (float)value;
-			AsInteger = (int) value;
-			AsColor = new Color((float) value, (float) value, (float) value);
-			AsString = "";
-        }
-
-	}
-
-
-	public class DTUConverter : Editor
-	{
-		public static DTU ParseDTUFile(string path)
-		{
-
-			var dtu = new DTU();
-			dtu.DTUPath = path;
-			dtu.UseSharedMaterialDir = false;
-			dtu.UseSharedTextureDir = false;
-
-			if (!System.IO.File.Exists(path))
-			{
-				UnityEngine.Debug.LogError("DTU File: " + path + " does not exist");
-				return dtu;
-			}
-
-			var text = System.IO.File.ReadAllText(path);
-
-			if(text.Length<=0)
-			{
-				UnityEngine.Debug.LogError("DTU File: " + path + " is empty");
-				return dtu;
-			}
-			//text = CleanJSON(text);
-			//var dtu = JsonUtility.FromJson<DTU>(text);
-
-
-			var root = SimpleJSON.JSON.Parse(text);
-
-			dtu.AssetID = root["Asset Id"].Value;
-			dtu.AssetName = root["Asset Name"].Value;
-			dtu.AssetType = root["Asset Type"].Value;
-			dtu.ProductName = root["Product Name"].Value;
-			dtu.ProductComponentName = root["Product Component Name"].Value;
-			dtu.FBXFile = root["FBX File"].Value;
-			dtu.ImportFolder = root["Import Folder"].Value;
-			dtu.Materials = new List<DTUMaterial>();
-
-			var materials = root["Materials"].AsArray;
-
-			foreach(var matKVP in materials)
-			{
-				var mat = matKVP.Value;
-				var dtuMat = new DTUMaterial();
-
-				dtuMat.Version = mat["Version"].AsFloat;
-				dtuMat.ProductName = dtu.ProductName;
-				dtuMat.ProductComponentName = dtu.ProductComponentName;
-				dtuMat.AssetName = mat["Asset Name"].Value;
-				dtuMat.MaterialName = mat["Material Name"].Value;
-				dtuMat.MaterialType = mat["Material Type"].Value;
-				dtuMat.Value = mat["Value"].Value;
-				dtuMat.Properties = new List<DTUMaterialProperty>();
-
-				var properties = mat["Properties"];
-				foreach(var propKVP in properties)
-				{
-					var prop = propKVP.Value;
-					var dtuMatProp = new DTUMaterialProperty();
-
-					//since this property was found, mark it
-					dtuMatProp.Exists = true;
-
-					dtuMatProp.Name = prop["Name"].Value;
-					dtuMatProp.Texture = prop["Texture"].Value;
-					var v = new DTUValue();
-
-					var propDataType = prop["Data Type"].Value;
-					if(propDataType == "Double")
-					{
-						v.Type = DTUValue.DataType.Double;
-						v.AsDouble = prop["Value"].AsDouble;
-
-					} else if(propDataType == "Integer")
-					{
-						v.Type = DTUValue.DataType.Integer;
-						v.AsInteger = prop["Value"].AsInt;
-					} else if(propDataType == "Float")
-					{
-						v.Type = DTUValue.DataType.Float;
-						v.AsDouble = prop["Value"].AsFloat;
-					} else if(propDataType == "String")
-					{
-						v.Type = DTUValue.DataType.String;
-						v.AsString = prop["Value"].Value;
-					} else if(propDataType == "Color")
-					{
-						v.Type = DTUValue.DataType.Color;
-						var tmpStr = prop["Value"].Value;
-						Color color;
-						if(!ColorUtility.TryParseHtmlString(tmpStr,out color))
-						{
-							UnityEngine.Debug.LogError("Failed to parse color hex code: " + tmpStr);
-							throw new System.Exception("Invalid color hex code");
-						}
-						v.AsColor = color;
-					} else if(propDataType == "Texture")
-					{
-						v.Type = DTUValue.DataType.Texture;
-
-						//these values will be hex colors
-						var tmpStr = prop["Value"].Value;
-						Color color;
-						if(!ColorUtility.TryParseHtmlString(tmpStr,out color))
-						{
-							UnityEngine.Debug.LogError("Failed to parse color hex code: " + tmpStr);
-							throw new System.Exception("Invalid color hex code");
-						}
-						v.AsColor = color;
-					}
-
-					else
-					{
-						UnityEngine.Debug.LogError("Type: " + propDataType + " is not supported");
-						throw new System.Exception("Unsupported type");
-					}
-
-					dtuMatProp.Value = v;
-
-					dtuMat.Properties.Add(dtuMatProp);
-				}
-
-				dtu.Materials.Add(dtuMat);
-			}
-
-			return dtu;
-		}
-
-
-		/// <summary>
-		/// Strips spaces from the json text in preparation for the JsonUtility (which doesn't handle spaces in keys)
-		/// This won't appropriately handle the special Value/Data Type in the Properties array, but if you don't need that this cleaner may help you
-		/// </summary>
-		/// <param name="jsonRaw"></param>
-		/// <returns></returns>
-		protected static string CleanJSON(string jsonText)
-		{
-			//Converts something like "Asset Name" :  => "AssetName"
-			// basically its... find something starting with whitespace, then a " then any space anywhere up to the next quote, but only the first occurance on the line
-			// then only replace it with the first capture and third capture group, skipping the 2nd capture group (the space)
-			var result = Regex.Replace(jsonText,"^(\\s+\"[^\"]+)([\\s]+)([^\"]+\"\\s*)","$1$3",RegexOptions.Multiline);
-			return result;
-
-		}
-
-		/// <summary>
-		/// Parses the DTU file and converts all materials and textures if dirty, will place next to DTU file
-		/// </summary>
-		[MenuItem("Daz3D/Extract materials from selected DTU", false, 102)]
-		[MenuItem("Assets/Daz3D/Extract materials", false, 102)]
-		public static void MenuItemConvert()
-		{
-			var activeObject = Selection.activeObject;
-			var path = AssetDatabase.GetAssetPath(activeObject);
-
-			var dtu = ParseDTUFile(path);
-
-			UnityEngine.Debug.Log("DTU: " + dtu.AssetName + " contains: " + dtu.Materials.Count + " materials");
-
-			foreach(var dtuMat in dtu.Materials)
-			{
-				dtu.ConvertToUnity(dtuMat);
-			}
-
-		}
-
-
-
-	}
-
 }

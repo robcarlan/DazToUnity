@@ -12,6 +12,48 @@ namespace Daz3D
     /// </summary>
     public class Daz3DInstance : MonoBehaviour
     {
+        [MenuItem("Daz3D/Reprocess Object")]
+        public static void ReprocessObject()
+        {
+            var file = Selection.activeObject.name;
+            
+            Debug.LogWarning("Will reprocess:" + file);
+            
+            var selectedGameObject = Selection.activeGameObject;
+            var daz3DInstance = selectedGameObject.GetComponent<Daz3DInstance>();
+            var fbxPath = AssetDatabase.GetAssetPath(daz3DInstance.SourceFBX);
+            var dtuPath = fbxPath.Replace(".fbx", ".dtu");
+            Daz3DBridge.ShowWindow();
+            Daz3DDTUImporter.Import(dtuPath, fbxPath);
+        }
+        
+        [MenuItem("Daz3D/Reprocess Object", true)]
+        public static bool ValidateReprocessObject()
+        {
+            var file = Selection.activeObject.name;
+            var selectedGameObject = Selection.activeGameObject;
+            var objectHasDaz3DInstance = selectedGameObject.GetComponent<Daz3DInstance>();
+            return objectHasDaz3DInstance;
+        }
+
+        public static string getSelectedDTUAssetPath()
+        {
+            var selectedGameObject = Selection.activeGameObject;
+            var daz3DInstance = selectedGameObject.GetComponent<Daz3DInstance>();
+            if (daz3DInstance)
+            {
+                return AssetDatabase.GetAssetPath(daz3DInstance.SourceFBX);
+            }
+            
+            var path = AssetDatabase.GetAssetPath(Selection.activeObject);
+            if (path.ToLower().EndsWith(".dtu"))
+            {
+                return path;
+            }
+
+            return null;
+        }
+        
         /// <summary>
         /// The FBX modelPrefab is used as the unifying key between the import session
         /// and the instance in the scene.
